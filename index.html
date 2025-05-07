@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+
+  <body>
+    <div id="app">
+      <div
+        class="flex flex-col items-start w-full items-center justify-center align-middle"
+      >
+        <div class="text-sm mb-4">{{user_message}}</div>
+        <div class="w-1/2 mb-4">
+          <input
+            class="block w-full text-sm text-gray-900 border border-gray-300 cursor-pointer bg-gray-50 focus:outline-none"
+            id="file_input"
+            type="file"
+          />
+        </div>
+        <button
+          v-if="!is_tfring"
+          v-on:click="start_tf"
+          class="mb-6 p-1 border-2 border-gray-500"
+        >
+          Start
+        </button>
+        <button
+          v-else
+          v-on:click="stop_tf"
+          class="mb-6 p-1 border-2 border-gray-500"
+        >
+          Stop
+        </button>
+        <div id="qrcode" class="hidden"></div>
+      </div>
+    </div>
+    <script src="./scripts/index.js"></script>
+    <script>
+      const { createApp, ref, onMounted } = Vue;
+
+      createApp({
+        setup() {
+          const user_message = ref("Choose file to get started");
+          const is_tfring = ref(false);
+          const chunk_size = 250;
+          let qro = "";
+
+          const encode_data = (index, input_bytes) => {
+            let encoded_string = String.fromCharCode.apply(null, input_bytes);
+            let utf8Encoder = new TextEncoder();
+            let utf8_bytes = utf8Encoder.encode(encoded_string);
+            let encoded_data = btoa(
+              String.fromCharCode.apply(null, utf8_bytes)
+            );
+            return index + "," + encoded_data;
+          };
+
+          const stop_tf = () => {
+            is_tfring.value = false;
+            user_message.value = "test";
+          };
+
+          const start_tf = async () => {
+            let file_input = document.getElementById("file_input");
+            is_tfring.value = true;
+            let file = file_input.files[0];
+            let data_chunks = [];
+            let data_array = pako.gzip(await file.arrayBuffer(), { level: 9 });
+            let total_chunks = Math.ceil(data_array.length / chunk_size);
+            let file_metadata = { name: file.name, chunks: total_chunks };
+            qro.clear();
+            qro.makeCode(JSON.stringify(file_metadata));
+            user_message.value = "Starting test in few seconds ...";
+            await new Promise((r) => setTimeout(r, 1000));
+            for (let i = 0; i < total_chunks; i++) {
+              await new Promise((r) => setTimeout(r, 150));
+              let start = i * chunk_size;
+              let chunk = data_array.subarray(start, start + chunk_size);
+              let encoded_data = encode_data(i, chunk);
+              qro.clear();
+              qro.makeCode(encoded_data);
+              user_message.value = `Chunk ${i}/${total_chunks} ...`;
+              if (!is_tfring.value) {
+                user_message.value = "Choose file to get started";
+                qro.clear();
+                qro.makeCode("Choose file to get started");
+                break;
+              }
+            }
+            stop_tf();
+          };
+
+          onMounted(() => {
+            console.log("Application Initialized ...");
+            let lowest_size =
+              Math.min(window.innerWidth, window.innerHeight) / 1.5;
+            qro = new QRCode("qrcode", {
+              text: "Choose file to get started",
+              width: lowest_size,
+              height: lowest_size,
+              typeNumber: 40,
+              colorDark: "#000000",
+              colorLight: "#ffffff",
+              correctLevel: QRCode.CorrectLevel.M,
+            });
+          });
+
+          return {
+            user_message,
+            start_tf,
+            stop_tf,
+            is_tfring,
+          };
+        },
+      }).mount("#app");
+
+      window.partyStart = () => {
+        document.getElementById('qrcode').classList.remove('hidden');
+      };
+    </script>
+  </body>
+</html>
