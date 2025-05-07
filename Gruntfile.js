@@ -60,7 +60,7 @@ module.exports = function (grunt) {
                     removeComments: true,
                     collapseWhitespace: true,
                     conservativeCollapse: true, // Be a bit more careful with collapsing
-                    minifyJS: false, // JS is already minified by uglify and inlined
+                    minifyJS: true, // JS is already minified by uglify and inlined
                     minifyCSS: true, // If you had CSS to inline and minify
                 },
                 files: {
