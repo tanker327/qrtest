@@ -5,158 +5,303 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="X-UA-Compatible" content="ie=edge" />
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.27/vue.global.prod.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+    <!-- zbarWasm should be loaded by scripts/index.js -->
   </head>
 
   <body>
     <div id="app">
       <div
-        class="flex flex-col items-start w-full items-center justify-center align-middle"
+        class="flex flex-col items-center w-full justify-center align-middle p-4"
       >
-        <div class="text-xl my-4">Data Receiver Mode</div>
+        <div class="text-xl my-4">QR Code File Receiver (Paste Mode)</div>
+        <div class="text-sm mb-2">Paste your screenshot containing QR codes below.</div>
+        <div 
+          id="pasteTarget"
+          class="w-full max-w-xl h-64 border-2 border-dashed border-gray-400 flex items-center justify-center text-gray-500 mb-4 overflow-auto bg-gray-50"
+        >
+          <img v-if="pasted_image_src" :src="pasted_image_src" alt="Pasted QR codes" class="max-w-full max-h-full object-contain" />
+          <span v-else>Paste image here (Ctrl+V or Cmd+V)</span>
+        </div>
+        
         <div class="text-sm mb-4">{{user_message}}</div>
         <div class="text-sm mb-4">
           Progress: {{Object.keys(decoded_chunks).length}} /
-          {{file_metadata.chunks || 0}}
+          {{file_metadata.chunks || "N/A"}}
         </div>
-        <button
-          v-if="!is_receiving"
-          v-on:click="start_receiver"
-          class="mb-6 p-1 border-2 border-gray-500"
-        >
-          Start Receiver
-        </button>
-        <button
-          v-else
-          v-on:click="stop_receiver"
-          class="mb-6 p-1 border-2 border-gray-500"
-        >
-          Stop Receiver
-        </button>
-        <video id="videoElement" muted autoplay playsinline></video>
+        <div class="flex space-x-4">
+          <button
+            v-if="!is_processing"
+            @click="process_pasted_image"
+            :disabled="!pasted_image_src"
+            class="mb-6 p-2 border-2 border-gray-500 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Process Image
+          </button>
+          <button
+            v-if="is_processing"
+            @click="stop_processing"
+            class="mb-6 p-2 border-2 border-red-500 text-red-500 rounded hover:bg-red-100"
+          >
+            Cancel Processing
+          </button>
+          <button
+            @click="clear_state"
+            class="mb-6 p-2 border-2 border-gray-400 rounded hover:bg-gray-100"
+          >
+            Clear
+          </button>
+        </div>
       </div>
     </div>
-    <script src="./vue.global.js"></script>
-    <script src="./index.js"></script>
-    <script src="./pako.min.js"></script>
+    <script src="./scripts/index.js"></script> <!-- Contains zbarWasm initialization -->
     <script>
       const { createApp, ref, reactive, onMounted, computed } = Vue;
 
       createApp({
         setup() {
-          const user_message = ref("Click receive button to start receiving");
+          const user_message = ref("Paste an image containing QR codes.");
           const decoded_chunks = ref({});
-          const total_chunks = ref(-1);
           const file_metadata = reactive({});
-          const is_receiving = ref(false);
-          let canvas, context, videoElement;
+          const is_processing = ref(false);
+          const pasted_image_src = ref(null);
 
-          const decode_data = (input_string) => {
-            const encoded_data = atob(input_string.split(",")[1]);
-            const encoded_array = Array.from(encoded_data, (char) =>
-              char.charCodeAt(0)
-            );
-            const utf8Decoder = new TextDecoder();
-            const output_string = utf8Decoder.decode(
-              new Uint8Array(encoded_array)
-            );
-            const data_array = Array.from(output_string, (char) =>
-              char.charCodeAt(0)
-            );
-            return {
-              index: parseInt(input_string.split(",")[0]),
-              data: data_array,
-            };
+          // Corrected decode_data to match index.html's encode_data
+          const decode_data = (input_string_with_prefix) => {
+            const parts = input_string_with_prefix.split(",");
+            if (parts.length < 2) return null; // Invalid format
+            const index = parseInt(parts[0]);
+            const base64_data = parts.slice(1).join(","); // Handle cases where data itself might have comma (unlikely here)
+            
+            try {
+              const binary_string = atob(base64_data);
+              const data_array = new Uint8Array(binary_string.length);
+              for (let i = 0; i < binary_string.length; i++) {
+                data_array[i] = binary_string.charCodeAt(i);
+              }
+              return {
+                index: index,
+                data: data_array, // This is a chunk of the gzipped file
+              };
+            } catch (e) {
+              console.error("Error decoding base64 data:", e, "for index:", index, "data:", base64_data.substring(0,20));
+              return null;
+            }
           };
 
-          const download_file = (data, fileName) => {
-            const blob = new Blob([data]);
+          const download_file = (data_buffer, file_name) => {
+            const blob = new Blob([data_buffer]);
             const dummy_element = document.createElement("a");
             const url = URL.createObjectURL(blob);
             dummy_element.href = url;
-            dummy_element.download = fileName;
+            dummy_element.download = file_name;
+            document.body.appendChild(dummy_element);
             dummy_element.click();
+            document.body.removeChild(dummy_element);
             URL.revokeObjectURL(url);
           };
 
-          const stop_receiver = () => {
-            is_receiving.value = false;
+          const clear_state = () => {
+            is_processing.value = false;
             decoded_chunks.value = {};
-            Object.assign(file_metadata, {});
-            user_message.value = "Click receive button to start receiving";
+            Object.keys(file_metadata).forEach(key => delete file_metadata[key]);
+            pasted_image_src.value = null;
+            user_message.value = "Paste an image containing QR codes.";
           };
 
-          const start_receiver = async () => {
-            decoded_chunks.value = {};
-            is_receiving.value = true;
-            while (
-              file_metadata.chunks != Object.keys(decoded_chunks.value).length
-            ) {
+          const stop_processing = () => {
+            is_processing.value = false;
+            user_message.value = "Processing cancelled. Paste a new image or clear.";
+          };
+
+          const process_pasted_image = async () => {
+            if (!pasted_image_src.value) {
+              user_message.value = "No image pasted. Please paste an image first.";
+              return;
+            }
+            if (is_processing.value) return; // Already processing
+
+            is_processing.value = true;
+            user_message.value = "Processing pasted image...";
+            // Reset data structures before processing symbols
+            decoded_chunks.value = {}; 
+            Object.keys(file_metadata).forEach(key => delete file_metadata[key]);
+            metadata_found = false; // Ensure metadata_found is also reset here
+
+            const image = new Image();
+            image.onload = async () => {
+              const temp_canvas = document.createElement('canvas');
+              temp_canvas.width = image.naturalWidth;
+              temp_canvas.height = image.naturalHeight;
+              const ctx = temp_canvas.getContext('2d');
+              ctx.drawImage(image, 0, 0);
+              const image_data = ctx.getImageData(0, 0, temp_canvas.width, temp_canvas.height);
+              console.log(`Processing image with dimensions: ${image.naturalWidth}x${image.naturalHeight}`);
+
+              let symbols = [];
               try {
-                await new Promise((r) => setTimeout(r, 10));
-                context.drawImage(videoElement, 0, 0);
-                image_data = context.getImageData(
-                  0,
-                  0,
-                  canvas.width,
-                  canvas.height
-                );
-                let symbols = await zbarWasm.scanImageData(image_data);
-                if (!symbols || !symbols.length) {
-                  continue;
+                // Ensure zbarWasm is loaded (it should be by scripts/index.js)
+                if (typeof zbarWasm === 'undefined' || !zbarWasm.scanImageData) {
+                    user_message.value = "QR scanner (zbarWasm) not loaded. Check console.";
+                    console.error("zbarWasm is not available or scanImageData is missing.");
+                    is_processing.value = false;
+                    return;
                 }
-                let decoded_data = symbols[0].decode();
-                if (decoded_data.includes("chunks")) {
-                  Object.assign(file_metadata, JSON.parse(decoded_data));
-                  decoded_chunks.value = {};
-                  user_message.value = `Transferring file: ${file_metadata.name}`;
-                } else if (decoded_data.split(",").length == 2) {
-                  let raw_data = decode_data(decoded_data);
-                  decoded_chunks.value[raw_data["index"]] = raw_data["data"];
-                }
-                window.decoded_chunks = decoded_chunks.value;
+                symbols = await zbarWasm.scanImageData(image_data);
               } catch (error) {
-                console.error("Error in Loop: ", error);
+                console.error("Error scanning image data with zbarWasm:", error);
+                user_message.value = "Error scanning QR codes. Check console.";
+                is_processing.value = false;
+                return;
               }
-              if (!is_receiving.value) {
-                Object.assign(file_metadata, {});
-                decoded_chunks.value = {};
-                user_message.value = "Click receive button to start receiving";
-                return true;
+              
+              if (!is_processing.value) return; // Check if cancelled during scan
+
+              if (!symbols || symbols.length === 0) {
+                user_message.value = "No QR codes found in the image.";
+                is_processing.value = false;
+                return;
               }
-            }
-            user_message.value = "Data Transfer Complete";
-            output_array = [];
-            for (let i = 0; i < file_metadata.chunks; i++) {
-              output_array = output_array.concat(decoded_chunks.value[i]);
-            }
-            let output_unit8array = Uint8Array.from(output_array);
-            window.output_unit8array = output_unit8array;
-            let infalted_array = pako.inflate(window.output_unit8array);
-            download_file(infalted_array, file_metadata.name);
-            stop_receiver();
+
+              user_message.value = `Found ${symbols.length} QR codes. Decoding...`;
+              // let metadata_found = false; // This was moved up
+
+              for (const symbol of symbols) {
+                if (!is_processing.value) break;
+                const decoded_symbol_data = symbol.decode();
+                console.log("Detected QR symbol data:", decoded_symbol_data.substring(0, 100) + (decoded_symbol_data.length > 100 ? "..." : "")); // Log raw symbol data
+
+                try {
+                  // Try to parse as metadata first
+                  const potential_metadata = JSON.parse(decoded_symbol_data);
+                  if (potential_metadata && typeof potential_metadata.chunks === 'number' && potential_metadata.name) {
+                    Object.assign(file_metadata, potential_metadata);
+                    metadata_found = true;
+                    user_message.value = `Found metadata for: ${file_metadata.name}. Total chunks: ${file_metadata.chunks}`;
+                    continue; // Move to next symbol
+                  }
+                } catch (e) {
+                  // Not JSON or not valid metadata, assume it's a chunk
+                }
+
+                const chunk_data_obj = decode_data(decoded_symbol_data);
+                if (chunk_data_obj) {
+                    console.log(`Result from decode_data for supposed chunk (index ${chunk_data_obj.index}):`, chunk_data_obj);
+                    if (typeof chunk_data_obj.index === 'number' && !isNaN(chunk_data_obj.index)) {
+                        if (chunk_data_obj.data instanceof Uint8Array) {
+                            decoded_chunks.value[chunk_data_obj.index] = chunk_data_obj.data;
+                            console.log(`Successfully added chunk ${chunk_data_obj.index} to decoded_chunks.`);
+                        } else {
+                            console.warn(`Chunk data for index ${chunk_data_obj.index} is not a Uint8Array. Type: ${typeof chunk_data_obj.data}, Value:`, chunk_data_obj.data);
+                        }
+                    } else {
+                        console.warn(`Chunk index is not a valid number. Index: ${chunk_data_obj.index}. Object:`, chunk_data_obj);
+                    }
+                } else {
+                  console.warn("decode_data returned null for symbol (likely atob failure or wrong format):", decoded_symbol_data.substring(0,50) + "...");
+                }
+              }
+              
+              if (!is_processing.value) return; // Check if cancelled during symbol processing
+
+              if (!metadata_found) {
+                user_message.value = `Found ${symbols.length} QR codes, but the metadata QR code was not identified or decoded correctly. Please ensure it's clear in the image.`;
+                is_processing.value = false;
+                return;
+              }
+
+              const received_chunk_count = Object.keys(decoded_chunks.value).length;
+              console.log("Decoded chunk indices:", Object.keys(decoded_chunks.value).map(k => parseInt(k)).sort((a,b) => a-b)); // Log decoded chunk indices
+              if (file_metadata.chunks && received_chunk_count === file_metadata.chunks) {
+                user_message.value = "All chunks received. Reconstructing file...";
+                let output_array_list = [];
+                for (let i = 0; i < file_metadata.chunks; i++) {
+                  if (decoded_chunks.value[i]) {
+                    output_array_list.push(decoded_chunks.value[i]);
+                  } else {
+                    user_message.value = `Error: Missing chunk ${i}. Cannot reconstruct.`;
+                    is_processing.value = false;
+                    return;
+                  }
+                }
+                
+                // Concatenate Uint8Arrays
+                const total_length = output_array_list.reduce((acc, val) => acc + val.length, 0);
+                const concatenated_gzipped_data = new Uint8Array(total_length);
+                let offset = 0;
+                for (const arr of output_array_list) {
+                    concatenated_gzipped_data.set(arr, offset);
+                    offset += arr.length;
+                }
+
+                try {
+                  const inflated_array = pako.inflate(concatenated_gzipped_data);
+                  download_file(inflated_array, file_metadata.name);
+                  user_message.value = `File "${file_metadata.name}" successfully reconstructed and downloaded.`;
+                } catch (e) {
+                  console.error("Error inflating data:", e);
+                  user_message.value = "Error decompressing file data. Check console.";
+                }
+              } else {
+                user_message.value = `Incomplete data: Received ${received_chunk_count} of ${file_metadata.chunks || 'N/A'} chunks.`;
+              }
+              is_processing.value = false;
+            };
+            image.onerror = () => {
+              user_message.value = "Could not load the pasted image.";
+              is_processing.value = false;
+            };
+            image.src = pasted_image_src.value;
           };
 
-          onMounted(async () => {
-            console.log("Application Initialized ...");
-            videoElement = document.getElementById("videoElement");
-            videoElement.srcObject = await navigator.mediaDevices.getUserMedia({
-              video: { facingMode: "environment" },
-            });
-            canvas = document.createElement("canvas");
-            context = canvas.getContext("2d");
-            await new Promise((r) => setTimeout(r, 2000));
-            canvas.height = videoElement.videoHeight;
-            canvas.width = videoElement.videoWidth;
-            context.drawImage(videoElement, 0, 0);
+          const handle_paste = (event) => {
+            const items = (event.clipboardData || event.originalEvent.clipboardData).items;
+            let image_file = null;
+            for (let i = 0; i < items.length; i++) {
+              if (items[i].type.indexOf("image") !== -1) {
+                image_file = items[i].getAsFile();
+                break;
+              }
+            }
+
+            if (image_file) {
+              const reader = new FileReader();
+              reader.onload = (e) => {
+                pasted_image_src.value = e.target.result;
+                user_message.value = "Image pasted. Click 'Process Image' or paste another.";
+                // Optionally auto-process: process_pasted_image();
+              };
+              reader.readAsDataURL(image_file);
+              event.preventDefault(); // Prevent image from being pasted as a file/text
+            } else {
+                user_message.value = "No image found in pasted content. Please paste an image.";
+            }
+          };
+
+          onMounted(() => {
+            console.log("Scanner Application Initialized (Paste Mode).");
+            window.addEventListener('paste', handle_paste);
+            // Ensure zbarWasm is loaded via scripts/index.js, otherwise provide feedback
+            setTimeout(() => { // Check after a brief delay to allow scripts/index.js to load
+                if (typeof zbarWasm === 'undefined') {
+                    console.warn("zbarWasm (QR Scanner) is not detected. Make sure it's loaded by scripts/index.js");
+                    user_message.value = "QR Scanner library not loaded. Functionality will be limited.";
+                }
+            }, 2000);
           });
+
+          // No onBeforeUnmount needed for window listener if app is root
 
           return {
             user_message,
-            start_receiver,
-            is_receiving,
+            process_pasted_image,
+            is_processing,
+            stop_processing,
             file_metadata,
             decoded_chunks,
-            stop_receiver,
+            pasted_image_src,
+            clear_state
           };
         },
       }).mount("#app");
