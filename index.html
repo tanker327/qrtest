@@ -5,9 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="X-UA-Compatible" content="ie=edge" />
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.27/vue.global.prod.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="./index.js"></script>
   </head>
 
   <body>
@@ -16,7 +14,7 @@
         class="flex flex-col items-start w-full items-center justify-center align-middle"
       >
       <div id="controls-area" class="flex flex-col items-center justify-center align-middle">
-        <div class="text-sm mb-4">{{user_message}}</div>
+        <div class="text-sm mb-4">{{ui_state.message}}</div>
         <div class="w-1/2 mb-4">
           <input
             class="block w-full text-sm text-gray-900 border border-gray-300 cursor-pointer bg-gray-50 focus:outline-none"
@@ -26,7 +24,7 @@
           />
         </div>
         <button
-          v-if="!is_tfring"
+          v-if="!ui_state.is_processing"
           @click="start_tf"
           class="mb-6 p-1 border-2 border-gray-500"
         >
@@ -40,17 +38,31 @@
           Stop
         </button>
         </div>
-        <div id="qrcode" class="hidden w-full max-w-2xl mx-auto flex items-center justify-center" style="height: 85vh;"></div>
+        <div
+          id="qrcode"
+          ref="qrcode_div_ref"
+          class="w-full mx-auto flex items-center justify-center"
+          :class="{
+            'hidden': !ui_state.show_qr_area,
+            'max-w-2xl': !ui_state.qr_area_fullscreen, /* Normal state class */
+            'fixed top-0 left-0 z-50 bg-white': ui_state.qr_area_fullscreen /* Fullscreen processing class */
+          }"
+          :style="{
+            height: ui_state.qr_area_fullscreen ? '90vh' : (ui_state.show_qr_area ? '85vh' : '0px'),
+            width: ui_state.qr_area_fullscreen ? '100vw' : (ui_state.show_qr_area ? '' : '0px'), /* Let Tailwind w-full handle normal width */
+            margin: !ui_state.qr_area_fullscreen && ui_state.show_qr_area ? '10px' : '0px'
+          }"
+        >
+          <!-- QR content will be injected here -->
+        </div>
       </div>
     </div>
     <script src="./scripts/index.js"></script>
     <script>
-      const { createApp, ref, onMounted } = Vue;
+      const { createApp, ref, onMounted, nextTick } = Vue;
 
       createApp({
         setup() {
-          const user_message = ref("Choose file to get started");
-          const is_tfring = ref(false);
           const chunk_size = 250; // bytes per chunk before base64
           const qr_code_options = {
             typeNumber: 40, // Max version for qrcode.js
@@ -59,18 +71,29 @@
             correctLevel: QRCode.CorrectLevel.M, // Medium correction
           };
 
+          const qrcode_div_ref = ref(null);
+          // const controls_div_ref = ref(null); // Define if needed for direct manipulation
+
+          const ui_state = ref({
+            message: "Choose file to get started",
+            is_processing: false,
+            qr_content_available: false,
+            show_qr_area: false,
+            qr_area_fullscreen: false,
+          });
+
           const file_selected = () => {
-            user_message.value = "File selected. Click Start to generate QR codes.";
-            const qrcode_div = document.getElementById('qrcode');
-            qrcode_div.innerHTML = '';
-            qrcode_div.classList.add('hidden');
+            ui_state.value.message = "File selected. Click Start to generate QR codes.";
+            if (qrcode_div_ref.value) {
+              qrcode_div_ref.value.innerHTML = '';
+            }
+            ui_state.value.qr_content_available = false;
+            ui_state.value.show_qr_area = false;
+            ui_state.value.qr_area_fullscreen = false;
           };
 
           const encode_data = (index, input_byte_array) => {
-            // input_byte_array is Uint8Array
             let binary_string = "";
-            // String.fromCharCode.apply(null, input_byte_array) can hit stack limits for large arrays.
-            // A loop is safer for arbitrary chunk_size, though 250 is likely fine.
             for (let i = 0; i < input_byte_array.length; i++) {
               binary_string += String.fromCharCode(input_byte_array[i]);
             }
@@ -81,7 +104,6 @@
           const generate_qr_canvas = (text, size) => {
             try {
               const temp_div = document.createElement('div');
-              // QRCode.js appends a canvas or img to temp_div
               new QRCode(temp_div, {
                 ...qr_code_options,
                 text: text,
@@ -90,8 +112,8 @@
               });
               return temp_div.querySelector('canvas') || temp_div.querySelector('img');
             } catch (e) {
-              console.error("Error generating single QR canvas:", e, "for text:", text);
-              user_message.value = `Error generating QR for: ${text.substring(0,20)}...`;
+              console.error("Error generating single QR canvas:", e, "for text:", text.substring(0, 50) + "...");
+              // Message will be handled by the main error handler in start_tf
               return null;
             }
           };
@@ -99,42 +121,38 @@
           const display_combined_qrs = (qr_elements, qr_size) => {
             const n = qr_elements.length;
             if (n === 0) {
-              user_message.value = "No QR codes to display.";
+              ui_state.value.message = "No QR codes to display.";
+              ui_state.value.qr_content_available = false;
+              ui_state.value.show_qr_area = false;
               return;
             }
 
-            const padding = 10; // Added padding
-            const cell_size = qr_size + 2 * padding; // Size of each cell including QR and padding
-
+            const padding = 10;
+            const cell_size = qr_size + 2 * padding;
             const cols = Math.ceil(Math.sqrt(n));
             const rows = Math.ceil(n / cols);
 
             const final_canvas = document.createElement('canvas');
-            final_canvas.width = cols * cell_size -10;
-            final_canvas.height = rows * cell_size-10;
+            final_canvas.width = cols * cell_size - padding * 2; // Adjusted for outer padding removal
+            final_canvas.height = rows * cell_size - padding * 2;
             const ctx = final_canvas.getContext('2d');
-            ctx.fillStyle = "white"; // Set background for the composite image
+            ctx.fillStyle = "white";
             ctx.fillRect(0, 0, final_canvas.width, final_canvas.height);
 
             for (let i = 0; i < n; i++) {
               const qr_el = qr_elements[i];
               if (!qr_el) continue;
-
               const row_idx = Math.floor(i / cols);
               const col_idx = i % cols;
-              const dx = col_idx * cell_size + padding; // Position to draw QR within its padded cell
-              const dy = row_idx * cell_size + padding;
-              try {
-                ctx.drawImage(qr_el, dx, dy, qr_size, qr_size);
-              } catch (e) {
-                console.error("Error drawing QR element to combined canvas:", e, qr_el);
-                // Optionally draw a placeholder or skip
-              }
+              const dx = col_idx * cell_size + padding - padding; // Draw starting from edge of cell
+              const dy = row_idx * cell_size + padding - padding;
+              ctx.drawImage(qr_el, dx, dy, qr_size, qr_size);
             }
 
-            const qrcode_div = document.getElementById('qrcode');
-            qrcode_div.innerHTML = ''; // Clear previous content
+            const qrcode_div = qrcode_div_ref.value;
+            if (!qrcode_div) return;
 
+            qrcode_div.innerHTML = '';
             const img_element = document.createElement('img');
             img_element.src = final_canvas.toDataURL();
             img_element.style.maxWidth = '100%';
@@ -143,174 +161,147 @@
             img_element.style.height = 'auto';
             img_element.style.display = 'block';
             img_element.style.margin = 'auto';
-            img_element.style.imageRendering = 'pixelated'; // Keep QR codes sharp
-
+            img_element.style.imageRendering = 'pixelated';
             qrcode_div.appendChild(img_element);
-            qrcode_div.classList.remove('hidden');
+
+            ui_state.value.qr_content_available = true;
+            ui_state.value.show_qr_area = true;
+            ui_state.value.qr_area_fullscreen = false; // Ensure not fullscreen when showing final QRs
           };
 
           const stop_tf = () => {
-            is_tfring.value = false;
-            // user_message update and UI clearing will be handled by start_tf's catch/finally
+            if (ui_state.value.is_processing) {
+              ui_state.value.is_processing = false; // Signal cancellation
+              // start_tf's loop will catch this and throw "Cancelled"
+            }
           };
 
           const start_tf = async () => {
             const file_input = document.getElementById("file_input");
             if (!file_input.files || file_input.files.length === 0) {
-              user_message.value = "Please select a file first.";
+              ui_state.value.message = "Please select a file first.";
               return;
             }
 
-            is_tfring.value = true;
-            // user_message.value = "Processing file..."; // This will be hidden by controlsArea hiding
+            ui_state.value.is_processing = true;
+            ui_state.value.message = "Initializing...";
+            ui_state.value.qr_content_available = false;
+            ui_state.value.qr_area_fullscreen = true;
+            ui_state.value.show_qr_area = true; // Show area for processing messages
 
-            const controlsArea = document.getElementById('controls-area');
-            const qrcodeDiv = document.getElementById('qrcode');
+            if (qrcode_div_ref.value) qrcode_div_ref.value.innerHTML = '';
+            await nextTick(); // Allow UI to update for fullscreen and message
 
-            if (controlsArea) {
-                controlsArea.classList.add('hidden');
-            }
-            if (qrcodeDiv) {
-                qrcodeDiv.innerHTML = ''; // Clear previous QR before making it fullscreen
-                qrcodeDiv.classList.remove('hidden', 'max-w-2xl', 'mx-auto');
-                qrcodeDiv.style.width = '100vw';
-                qrcodeDiv.style.height = '90vh';
-                qrcodeDiv.style.position = 'fixed';
-                qrcodeDiv.style.top = '0';
-                qrcodeDiv.style.left = '0';
-                qrcodeDiv.style.zIndex = '50'; 
-                qrcodeDiv.style.backgroundColor = 'white'; // Ensure scannable background
-            }
-
-            await new Promise(resolve => requestAnimationFrame(resolve)); // Allow UI to update
-
-            // Determine individual QR code size dynamically, e.g., based on a fraction of screen width
-            // For now, let's use a fixed moderate size for individual QRs.
-            // The final composite image can be large, so it's styled to be responsive.
-            const individual_qr_size = 500; // Increased for more detail
-
+            const individual_qr_size = 500;
             let qr_elements = [];
 
             try {
               const file = file_input.files[0];
+              ui_state.value.message = "Reading file...";
+              await nextTick();
               const file_buffer = await file.arrayBuffer();
+
+              if (!ui_state.value.is_processing) throw new Error("Cancelled");
+              ui_state.value.message = "Compressing data...";
+              await nextTick();
               const data_array = pako.gzip(file_buffer, { level: 9 });
+
               const total_chunks = Math.ceil(data_array.length / chunk_size);
               const file_metadata = {
-                name: file.name,
-                chunks: total_chunks,
-                original_size: file.size,
-                gzipped_size: data_array.length,
-                timestamp: new Date().toISOString()
+                name: file.name, chunks: total_chunks, original_size: file.size,
+                gzipped_size: data_array.length, timestamp: new Date().toISOString()
               };
 
-              if (!is_tfring.value) throw new Error("Cancelled");
-              user_message.value = "Generating metadata QR...";
-              await new Promise(resolve => requestAnimationFrame(resolve));
+              if (!ui_state.value.is_processing) throw new Error("Cancelled");
+              ui_state.value.message = "Generating metadata QR...";
+              await nextTick();
               const metadata_qr_el = generate_qr_canvas(JSON.stringify(file_metadata), individual_qr_size);
               if (metadata_qr_el) qr_elements.push(metadata_qr_el);
               else throw new Error("Failed to generate metadata QR.");
 
-
               for (let i = 0; i < total_chunks; i++) {
-                if (!is_tfring.value) throw new Error("Cancelled");
-                user_message.value = `Generating QR for chunk ${i + 1}/${total_chunks}...`;
-                await new Promise(resolve => requestAnimationFrame(resolve));
-
+                if (!ui_state.value.is_processing) throw new Error("Cancelled");
+                ui_state.value.message = `Generating QR for chunk ${i + 1}/${total_chunks}...`;
+                await nextTick();
                 const start_byte = i * chunk_size;
                 const chunk = data_array.subarray(start_byte, start_byte + chunk_size);
                 const encoded_data_str = encode_data(i, chunk);
                 const chunk_qr_el = generate_qr_canvas(encoded_data_str, individual_qr_size);
-                
                 if (chunk_qr_el) qr_elements.push(chunk_qr_el);
-                else {
-                  // Allow continuing if one chunk fails, or throw error
-                  console.warn(`Failed to generate QR for chunk ${i}`);
-                  // For now, let's try to continue, it will be missing in the final image
-                }
+                else console.warn(`Failed to generate QR for chunk ${i}, skipping.`); // Or throw
               }
 
-              if (!is_tfring.value) throw new Error("Cancelled");
+              if (!ui_state.value.is_processing) throw new Error("Cancelled");
 
-              if (qr_elements.length > 0) {
-                user_message.value = "Combining QR codes into a single image...";
-                await new Promise(resolve => requestAnimationFrame(resolve));
-                display_combined_qrs(qr_elements, individual_qr_size);
-                if (is_tfring.value) { // Check again before final message
-                    user_message.value = `All ${qr_elements.length} QR codes generated and displayed.`;
+              if (qr_elements.length > (total_chunks > 0 ? 1:0)) { // Check if any data QRs or only metadata
+                ui_state.value.message = "Combining QR codes...";
+                await nextTick();
+                ui_state.value.qr_area_fullscreen = false; // Switch from processing fullscreen to display mode
+                await nextTick(); // Allow style to apply
+                display_combined_qrs(qr_elements, individual_qr_size); // Sets content_available, show_qr_area
+                if (ui_state.value.is_processing) { // Final check post display
+                    ui_state.value.message = `All ${qr_elements.length} QR codes generated.`;
                 }
-              } else {
-                user_message.value = "No QR codes were generated successfully.";
+              } else if (qr_elements.length === 1 && total_chunks === 0 && file_metadata) { // Only metadata QR for empty/small file
+                ui_state.value.message = "Displaying metadata QR...";
+                await nextTick();
+                ui_state.value.qr_area_fullscreen = false;
+                await nextTick();
+                display_combined_qrs(qr_elements, individual_qr_size);
+                 if (ui_state.value.is_processing) {
+                    ui_state.value.message = "Metadata QR code generated.";
+                }
+              }
+              else {
+                throw new Error("No QR codes were successfully generated.");
               }
 
             } catch (error) {
-              const qrcode_div = document.getElementById('qrcode');
-              qrcode_div.innerHTML = '';
-              qrcode_div.classList.add('hidden');
+              ui_state.value.qr_content_available = false; // Explicitly mark no content on error
               if (error.message === "Cancelled") {
-                user_message.value = "Operation cancelled by user.";
+                ui_state.value.message = "Operation cancelled by user.";
               } else {
-                console.error("Error during QR generation process:", error);
-                user_message.value = "Error generating QR codes. Check console for details.";
+                console.error("Error during QR generation:", error);
+                ui_state.value.message = `Error: ${error.message}. Check console.`;
               }
             } finally {
-              const controlsArea = document.getElementById('controls-area');
-              const qrcodeDiv = document.getElementById('qrcode');
+              ui_state.value.qr_area_fullscreen = false; // Ensure fullscreen is off
 
-              // if (controlsArea) {
-              //     controlsArea.classList.remove('hidden');
-              // }
-
-              if (qrcodeDiv) {
-                  // Reset styles for qrcodeDiv
-                  // qrcodeDiv.classList.add('max-w-2xl', 'mx-auto');
-                  qrcodeDiv.style.width = ''; // Reverts to Tailwind's w-full
-                  // qrcodeDiv.style.height = '85vh'; // Original height
-                  qrcodeDiv.style.position = '';
-                  qrcodeDiv.style.top = '';
-                  qrcodeDiv.style.left = '';
-                  qrcodeDiv.style.zIndex = '';
-                  qrcodeDiv.style.backgroundColor = '';
-                  qrcodeDiv.style.margin = '10px';
-
-                  // Determine if QR content exists and manage visibility
-                  const hasContent = qrcodeDiv.querySelector('img') || qrcodeDiv.querySelector('canvas');
-                  const hasErrorOrCancelled = user_message.value.includes("Cancelled") || 
-                                            user_message.value.includes("Error") || 
-                                            user_message.value.includes("No QR codes were generated successfully.") ||
-                                            user_message.value.includes("Please select a file first.");
-
-                  if (!hasContent || hasErrorOrCancelled) {
-                      if (!qrcodeDiv.classList.contains('hidden')) {
-                          qrcodeDiv.classList.add('hidden');
-                      }
-                  } else {
-                      // If there's content and no error/cancellation, it should have been made visible by display_combined_qrs
-                      // but ensure it's not hidden if display_combined_qrs didn't run due to early exit (e.g. no QR elements).
-                      // However, display_combined_qrs itself handles qrcodeDiv.classList.remove('hidden').
-                      // So, the main concern here is re-hiding if necessary.
-                  }
+              if (ui_state.value.qr_content_available && ui_state.value.is_processing) {
+                // Content is ready, and operation wasn't cancelled before this point
+                ui_state.value.show_qr_area = true;
+              } else {
+                // Covers cancellation, errors, or no content generated
+                if (qrcode_div_ref.value) qrcode_div_ref.value.innerHTML = '';
+                ui_state.value.show_qr_area = false;
               }
-              is_tfring.value = false;
+              ui_state.value.is_processing = false; // Mark processing as fully ended
             }
           };
 
           onMounted(() => {
-            console.log("Application Initialized with multi-QR generator.");
-            // No initial QR code display
+            console.log("Application Initialized (Refactored).");
+            // Ensure pako and QRCode (from qrcode.min.js) are loaded globally
+            if (typeof pako === 'undefined') console.error("Pako.js not loaded!");
+            if (typeof QRCode === 'undefined') console.error("QRCode.js not loaded!");
           });
 
           return {
-            user_message,
+            ui_state, // Main state object
             start_tf,
             stop_tf,
-            is_tfring,
             file_selected,
+            qrcode_div_ref, // Ref for the QR display div
+            // controls_div_ref, // Expose if needed
           };
         },
       }).mount("#app");
 
-      // window.partyStart is removed as display_combined_qrs handles visibility
+      // Ensure your HTML template uses ui_state.message, ui_state.is_processing,
+      // ui_state.show_qr_area, ui_state.qr_area_fullscreen for bindings.
+      // e.g., <div class="text-sm mb-4">{{ ui_state.message }}</div>
+      // e.g., <button v-if="!ui_state.is_processing" @click="start_tf">Start</button>
+      // e.g., <div ref="qrcode_div_ref" :class="{ 'hidden': !ui_state.show_qr_area, ... }">
     </script>
   </body>
 </html>
