@@ -10,9 +10,17 @@
 
   <body>
     <div id="app">
+      <!-- Hidden file input, moved here -->
+      <input
+            style="display: none;"
+            id="file_input"
+            type="file"
+            @change="file_selected"
+      />
       <div
-        class="flex flex-col items-start w-full items-center justify-center align-middle"
-      >
+        class="flex flex-col items-start w-full items-center justify-center align-middle" @dblclick="handleDoubleClick">
+      <!-- START DELETION: controls-area -->
+      <!--
       <div id="controls-area" class="flex flex-col items-center justify-center align-middle">
         <div class="text-sm mb-4">{{ui_state.message}}</div>
         <div class="w-1/2 mb-4">
@@ -38,13 +46,16 @@
           Stop
         </button>
         </div>
+        -->
+        <!-- END DELETION: controls-area -->
+        <!-- Message area, can be simple text or integrated elsewhere if needed -->
+        <div class="text-sm my-4 text-center w-full">{{ui_state.message}}</div>
         <div
           id="qrcode"
           ref="qrcode_div_ref"
           class="w-full mx-auto flex items-center justify-center"
           :class="{
             'hidden': !ui_state.show_qr_area,
-            'max-w-2xl': !ui_state.qr_area_fullscreen, /* Normal state class */
             'fixed top-0 left-0 z-50 bg-white': ui_state.qr_area_fullscreen /* Fullscreen processing class */
           }"
           :style="{
@@ -74,21 +85,34 @@
           // const controls_div_ref = ref(null); // Define if needed for direct manipulation
 
           const ui_state = ref({
-            message: "Choose file to get started",
+            message: "Something is wrong with the app....", // Updated initial message
             is_processing: false,
             qr_content_available: false,
             show_qr_area: false,
             qr_area_fullscreen: false,
           });
 
+          const handleDoubleClick = () => {
+            console.log('Double-click event fired on #app');
+            document.getElementById('file_input').click();
+            console.log('File input clicked programmatically.');
+          };
+
           const file_selected = () => {
-            ui_state.value.message = "File selected. Click Start to generate QR codes.";
+            console.log('File input @change event fired.');
+            // Clear previous QR content and reset state
             if (qrcode_div_ref.value) {
               qrcode_div_ref.value.innerHTML = '';
             }
             ui_state.value.qr_content_available = false;
             ui_state.value.show_qr_area = false;
             ui_state.value.qr_area_fullscreen = false;
+            
+            const fileInput = document.getElementById("file_input");
+            if (fileInput.files && fileInput.files.length > 0) {
+              // ui_state.value.message = "File selected. Starting processing..."; // Message is set in start_tf
+              start_tf(); 
+            }
           };
 
           const encode_data = (index, input_byte_array) => {
@@ -171,14 +195,16 @@
           const stop_tf = () => {
             if (ui_state.value.is_processing) {
               ui_state.value.is_processing = false; // Signal cancellation
-              // start_tf's loop will catch this and throw "Cancelled"
+              ui_state.value.message = "Processing cancelled by user.";
             }
           };
 
           const start_tf = async () => {
             const file_input = document.getElementById("file_input");
             if (!file_input.files || file_input.files.length === 0) {
-              ui_state.value.message = "Please select a file first.";
+              // This check might be redundant if file_selected ensures a file is present
+              // but good as a safeguard.
+              ui_state.value.message = "No file selected. Double-click to select.";
               return;
             }
 
@@ -283,15 +309,16 @@
             // Ensure pako and QRCode (from qrcode.min.js) are loaded globally
             if (typeof pako === 'undefined') console.error("Pako.js not loaded!");
             if (typeof QRCode === 'undefined') console.error("QRCode.js not loaded!");
+            console.log('Vue app mounted and setup complete.'); // Added for debugging
           });
 
           return {
-            ui_state, // Main state object
+            qrcode_div_ref,
+            ui_state,
+            handleDoubleClick,
+            file_selected,
             start_tf,
             stop_tf,
-            file_selected,
-            qrcode_div_ref, // Ref for the QR display div
-            // controls_div_ref, // Expose if needed
           };
         },
       }).mount("#app");

@@ -7,6 +7,29 @@ module.exports = function (grunt) {
                 src: "index.html",
                 dest: "dist/index.tmp.html", // Temporary file for inlining
             },
+            s_files: {
+                files: [
+                    {
+                        expand: true,
+                        cwd: ".",
+                        src: ["index.js", "zbar.wasm"],
+                        dest: "dist/s/",
+                        flatten: true,
+                    },
+                    {
+                        expand: true,
+                        cwd: ".",
+                        src: ["scanner.html"],
+                        dest: "dist/s/",
+                        flatten: true,
+                        rename: function (dest, src) {
+                            return (
+                                dest + src.replace("scanner.html", "index.html")
+                            );
+                        },
+                    },
+                ],
+            },
         },
 
         uglify: {
@@ -65,6 +88,7 @@ module.exports = function (grunt) {
     // Define the default task, add clean to the end
     grunt.registerTask("default", [
         "copy:html",
+        "copy:s_files", // Add the new copy target to the default task
         "uglify",
         "inline",
         "htmlmin",
