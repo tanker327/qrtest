@@ -35,7 +35,12 @@ module.exports = function (grunt) {
         uglify: {
             options: {
                 mangle: true,
-                compress: true,
+                compress: {
+                    drop_console: true, // This will remove console.log statements
+                },
+                output: {
+                    comments: false, // This will remove all comments
+                },
             },
             main_script: {
                 files: {

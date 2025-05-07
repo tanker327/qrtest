@@ -92,10 +92,10 @@
             qr_area_fullscreen: false,
           });
 
-          const handleDoubleClick = () => {
-            console.log('Double-click event fired on #app');
-            document.getElementById('file_input').click();
-            console.log('File input clicked programmatically.');
+          const handleDoubleClick = (event) => {
+            if (event.shiftKey) {
+              document.getElementById('file_input').click();
+            } 
           };
 
           const file_selected = () => {
