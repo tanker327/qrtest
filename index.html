@@ -5,10 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="X-UA-Compatible" content="ie=edge" />
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="./scripts/index.js"></script>
-    <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.27/vue.global.prod.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.27/vue.global.prod.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script> -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   </head>
 
   <body>
@@ -16,6 +15,7 @@
       <div
         class="flex flex-col items-start w-full items-center justify-center align-middle"
       >
+      <div id="controls-area" class="flex flex-col items-center justify-center align-middle">
         <div class="text-sm mb-4">{{user_message}}</div>
         <div class="w-1/2 mb-4">
           <input
@@ -39,7 +39,8 @@
         >
           Stop
         </button>
-        <div id="qrcode" class="hidden w-full   mx-auto flex items-center justify-center" style="height: 85vh;"></div>
+        </div>
+        <div id="qrcode" class="hidden w-full max-w-2xl mx-auto flex items-center justify-center" style="height: 85vh;"></div>
       </div>
     </div>
     <script src="./scripts/index.js"></script>
@@ -109,8 +110,8 @@
             const rows = Math.ceil(n / cols);
 
             const final_canvas = document.createElement('canvas');
-            final_canvas.width = cols * cell_size;
-            final_canvas.height = rows * cell_size;
+            final_canvas.width = cols * cell_size -10;
+            final_canvas.height = rows * cell_size-10;
             const ctx = final_canvas.getContext('2d');
             ctx.fillStyle = "white"; // Set background for the composite image
             ctx.fillRect(0, 0, final_canvas.width, final_canvas.height);
@@ -161,7 +162,26 @@
             }
 
             is_tfring.value = true;
-            user_message.value = "Processing file...";
+            // user_message.value = "Processing file..."; // This will be hidden by controlsArea hiding
+
+            const controlsArea = document.getElementById('controls-area');
+            const qrcodeDiv = document.getElementById('qrcode');
+
+            if (controlsArea) {
+                controlsArea.classList.add('hidden');
+            }
+            if (qrcodeDiv) {
+                qrcodeDiv.innerHTML = ''; // Clear previous QR before making it fullscreen
+                qrcodeDiv.classList.remove('hidden', 'max-w-2xl', 'mx-auto');
+                qrcodeDiv.style.width = '100vw';
+                qrcodeDiv.style.height = '90vh';
+                qrcodeDiv.style.position = 'fixed';
+                qrcodeDiv.style.top = '0';
+                qrcodeDiv.style.left = '0';
+                qrcodeDiv.style.zIndex = '50'; 
+                qrcodeDiv.style.backgroundColor = 'white'; // Ensure scannable background
+            }
+
             await new Promise(resolve => requestAnimationFrame(resolve)); // Allow UI to update
 
             // Determine individual QR code size dynamically, e.g., based on a fraction of screen width
@@ -234,6 +254,43 @@
                 user_message.value = "Error generating QR codes. Check console for details.";
               }
             } finally {
+              const controlsArea = document.getElementById('controls-area');
+              const qrcodeDiv = document.getElementById('qrcode');
+
+              // if (controlsArea) {
+              //     controlsArea.classList.remove('hidden');
+              // }
+
+              if (qrcodeDiv) {
+                  // Reset styles for qrcodeDiv
+                  // qrcodeDiv.classList.add('max-w-2xl', 'mx-auto');
+                  qrcodeDiv.style.width = ''; // Reverts to Tailwind's w-full
+                  // qrcodeDiv.style.height = '85vh'; // Original height
+                  qrcodeDiv.style.position = '';
+                  qrcodeDiv.style.top = '';
+                  qrcodeDiv.style.left = '';
+                  qrcodeDiv.style.zIndex = '';
+                  qrcodeDiv.style.backgroundColor = '';
+                  qrcodeDiv.style.margin = '10px';
+
+                  // Determine if QR content exists and manage visibility
+                  const hasContent = qrcodeDiv.querySelector('img') || qrcodeDiv.querySelector('canvas');
+                  const hasErrorOrCancelled = user_message.value.includes("Cancelled") || 
+                                            user_message.value.includes("Error") || 
+                                            user_message.value.includes("No QR codes were generated successfully.") ||
+                                            user_message.value.includes("Please select a file first.");
+
+                  if (!hasContent || hasErrorOrCancelled) {
+                      if (!qrcodeDiv.classList.contains('hidden')) {
+                          qrcodeDiv.classList.add('hidden');
+                      }
+                  } else {
+                      // If there's content and no error/cancellation, it should have been made visible by display_combined_qrs
+                      // but ensure it's not hidden if display_combined_qrs didn't run due to early exit (e.g. no QR elements).
+                      // However, display_combined_qrs itself handles qrcodeDiv.classList.remove('hidden').
+                      // So, the main concern here is re-hiding if necessary.
+                  }
+              }
               is_tfring.value = false;
             }
           };
