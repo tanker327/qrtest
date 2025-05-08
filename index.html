@@ -15,6 +15,7 @@
             style="display: none;"
             id="file_input"
             type="file"
+            multiple
             @change="file_selected"
       />
       <div
@@ -83,6 +84,7 @@
           };
 
           const pizza_div_ref = ref(null);
+          const all_pizza_elements = ref([]); // Array to accumulate QR codes from all files
           // const controls_div_ref = ref(null); // Define if needed for direct manipulation
 
           const ui_state = ref({
@@ -91,6 +93,8 @@
             pizza_content_available: false,
             show_pizza_area: false,
             pizza_area_fullscreen: false,
+            current_file_index: 0,
+            total_files: 0,
           });
 
           const handleDoubleClick = (event) => {
@@ -108,20 +112,24 @@
             ui_state.value.show_pizza_area = false;
             ui_state.value.pizza_area_fullscreen = false;
             
+            // Clear accumulated pizza elements
+            all_pizza_elements.value = [];
+            
             const fileInput = document.getElementById("file_input");
             if (fileInput.files && fileInput.files.length > 0) {
-              // ui_state.value.message = "File selected. Starting processing..."; // Message is set in start_tf
+              ui_state.value.total_files = fileInput.files.length;
+              ui_state.value.current_file_index = 0;
               start_tf(); 
             }
           };
 
-          const encode_data = (index, input_byte_array) => {
+          const encode_data = (file_id, index, input_byte_array) => {
             let binary_string = "";
             for (let i = 0; i < input_byte_array.length; i++) {
               binary_string += String.fromCharCode(input_byte_array[i]);
             }
             let base64_data = btoa(binary_string);
-            return index + "," + base64_data;
+            return `${file_id}_${index},${base64_data}`;
           };
 
           const generate_pizza_canvas = (text, size) => {
@@ -244,11 +252,35 @@
             }
           };
 
+          const generate_file_id = (file) => {
+            // Generate a unique ID based on filename and timestamp
+            return `${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+          };
+
+          const process_next_file = async () => {
+            if (ui_state.value.current_file_index < ui_state.value.total_files) {
+              await process_single_file();
+              ui_state.value.current_file_index++;
+              if (ui_state.value.current_file_index < ui_state.value.total_files) {
+                await process_next_file();
+              } else {
+                // All files processed, display all QR codes
+                const individual_pizza_size = 500;
+                ui_state.value.message = "Combining all QR codes...";
+                await nextTick();
+                ui_state.value.pizza_area_fullscreen = false;
+                await nextTick();
+                display_combined_pizzas(all_pizza_elements.value, individual_pizza_size);
+                if (ui_state.value.is_processing) {
+                  ui_state.value.message = `All QR codes ready for ${ui_state.value.total_files} files.`;
+                }
+              }
+            }
+          };
+
           const start_tf = async () => {
             const file_input = document.getElementById("file_input");
             if (!file_input.files || file_input.files.length === 0) {
-              // This check might be redundant if file_selected ensures a file is present
-              // but good as a safeguard.
               ui_state.value.message = "No file selected. Double-click to select.";
               return;
             }
@@ -262,12 +294,19 @@
             if (pizza_div_ref.value) pizza_div_ref.value.innerHTML = '';
             await nextTick(); // Allow UI to update for fullscreen and message
 
+            await process_next_file();
+          };
+
+          const process_single_file = async () => {
+            const file_input = document.getElementById("file_input");
+            const file = file_input.files[ui_state.value.current_file_index];
+            if (!file) return;
+
             const individual_pizza_size = 500;
             let pizza_elements = [];
 
             try {
-              const file = file_input.files[0];
-              ui_state.value.message = "Reading ...";
+              ui_state.value.message = `Processing file ${ui_state.value.current_file_index + 1}/${ui_state.value.total_files}: ${file.name}...`;
               await nextTick();
               const file_buffer = await file.arrayBuffer();
 
@@ -282,9 +321,12 @@
               if (file.name.length > MAX_FILENAME_LENGTH) {
                 truncated_filename = file.name.substring(0, MAX_FILENAME_LENGTH - 3) + "...";
               }
+              const file_id = generate_file_id(file);
               const file_metadata = {
+                id: file_id,
                 name: truncated_filename, // Use truncated name
-                chunks: total_chunks, original_size: file.size,
+                chunks: total_chunks,
+                original_size: file.size,
                 gzipped_size: data_array.length
               };
 
@@ -292,46 +334,32 @@
               ui_state.value.message = "Generating metadata pizza...";
               await nextTick();
               const metadata_pizza_el = generate_pizza_canvas(JSON.stringify(file_metadata), individual_pizza_size);
-              if (metadata_pizza_el) pizza_elements.push(metadata_pizza_el);
+              if (metadata_pizza_el) {
+                pizza_elements.push(metadata_pizza_el);
+                all_pizza_elements.value.push(metadata_pizza_el);
+              }
               else throw new Error("Failed to generate metadata pizza.");
 
               for (let i = 0; i < total_chunks; i++) {
                 if (!ui_state.value.is_processing) throw new Error("Cancelled");
-                ui_state.value.message = `Generating pizza for chunk ${i + 1}/${total_chunks}...`;
+                ui_state.value.message = `Generating pizza for chunk ${i + 1}/${total_chunks} of file ${ui_state.value.current_file_index + 1}/${ui_state.value.total_files}...`;
                 await nextTick();
                 const start_byte = i * chunk_size;
                 const chunk = data_array.subarray(start_byte, start_byte + chunk_size);
-                const encoded_data_str = encode_data(i, chunk);
+                const encoded_data_str = encode_data(file_id, i, chunk);
                 const chunk_pizza_el = generate_pizza_canvas(encoded_data_str, individual_pizza_size);
-                if (chunk_pizza_el) pizza_elements.push(chunk_pizza_el);
+                if (chunk_pizza_el) {
+                  pizza_elements.push(chunk_pizza_el);
+                  all_pizza_elements.value.push(chunk_pizza_el);
+                }
                 else {} // Or throw
               }
 
               if (!ui_state.value.is_processing) throw new Error("Cancelled");
 
-              if (pizza_elements.length > (total_chunks > 0 ? 1:0)) { // Check if any data pizzas or only metadata
-                ui_state.value.message = "Combining ...";
-                await nextTick();
-                ui_state.value.pizza_area_fullscreen = false; // Switch from processing fullscreen to display mode
-                await nextTick(); // Allow style to apply
-                display_combined_pizzas(pizza_elements, individual_pizza_size); // Sets content_available, show_pizza_area
-                if (ui_state.value.is_processing) { // Final check post display
-                    ui_state.value.message = `All ${pizza_elements.length} pizzas ready.`;
-                }
-              } else if (pizza_elements.length === 1 && total_chunks === 0 && file_metadata) { // Only metadata pizza for empty/small file
-                ui_state.value.message = "Displaying metadata pizza...";
-                await nextTick();
-                ui_state.value.pizza_area_fullscreen = false;
-                await nextTick();
-                display_combined_pizzas(pizza_elements, individual_pizza_size);
-                 if (ui_state.value.is_processing) {
-                    ui_state.value.message = "Metadata pizza ready.";
-                }
-              }
-              else {
-                throw new Error("No pizzas were successfully generated.");
-              }
-
+              // We don't display individual file QR codes anymore - we'll display all at the end
+              ui_state.value.message = `Generated ${pizza_elements.length} QR codes for ${file.name}. Processing next file...`;
+              
             } catch (error) {
               ui_state.value.pizza_content_available = false; // Explicitly mark no content on error
               if (error.message === "Cancelled") {
@@ -339,18 +367,7 @@
               } else {
                 ui_state.value.message = `Error: ${error.message}.`;
               }
-            } finally {
-              ui_state.value.pizza_area_fullscreen = false; // Ensure fullscreen is off
-
-              if (ui_state.value.pizza_content_available && ui_state.value.is_processing) {
-                // Content is ready, and operation wasn't cancelled before this point
-                ui_state.value.show_pizza_area = true;
-              } else {
-                // Covers cancellation, errors, or no content generated
-                if (pizza_div_ref.value) pizza_div_ref.value.innerHTML = '';
-                ui_state.value.show_pizza_area = false;
-              }
-              ui_state.value.is_processing = false; // Mark processing as fully ended
+              // Don't set is_processing to false here to allow the next file to be processed
             }
           };
 

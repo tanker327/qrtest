@@ -25,10 +25,43 @@
         </div>
         
         <div class="text-sm mb-4">{{user_message}}</div>
-        <div class="text-sm mb-4">
-          Progress: {{Object.keys(decoded_chunks).length}} /
-          {{file_metadata.chunks || "N/A"}}
+        
+        <!-- File progress list -->
+        <div v-if="Object.keys(files_data).length > 0" class="w-full max-w-xl mb-4">
+          <div class="text-sm font-bold mb-2">Files Progress:</div>
+          <!-- Download All Button - show when there are at least 2 complete files -->
+          <div v-if="complete_files_count >= 2" class="mb-2 p-2 bg-blue-50 border rounded border-blue-300">
+            <div class="flex justify-between items-center">
+              <span>{{complete_files_count}} files ready for download</span>
+              <button 
+                @click="download_all_files"
+                class="p-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+              >
+                Download All Files
+              </button>
+            </div>
+          </div>
+          <div 
+            v-for="(fileData, fileId) in files_data" 
+            :key="fileId" 
+            class="mb-2 p-2 border rounded"
+            :class="{'bg-green-50': fileData.is_complete, 'bg-yellow-50': !fileData.is_complete}"
+          >
+            <div class="flex justify-between">
+              <span>{{fileData.metadata.name || 'Unknown file'}}</span>
+              <span v-if="fileData.is_complete" class="text-green-600">Complete</span>
+              <span v-else class="text-yellow-600">{{Object.keys(fileData.chunks).length}} / {{fileData.metadata.chunks || '?'}} chunks</span>
+            </div>
+            <button 
+              v-if="fileData.is_complete" 
+              @click="download_specific_file(fileId)"
+              class="mt-1 p-1 text-sm border border-green-500 text-green-700 rounded hover:bg-green-100"
+            >
+              Download
+            </button>
+          </div>
         </div>
+        
         <div class="flex space-x-4">
           <button
             @click="request_paste"
@@ -67,17 +100,35 @@
       createApp({
         setup() {
           const user_message = ref("Paste an image containing QR codes.");
-          const decoded_chunks = ref({});
-          const file_metadata = reactive({});
+          const files_data = ref({});
           const is_processing = ref(false);
           const pasted_image_src = ref(null);
+          const is_downloading_all = ref(false);
+          
+          // Computed property to count complete files
+          const complete_files_count = computed(() => {
+            return Object.values(files_data.value).filter(fd => fd.is_complete).length;
+          });
 
           // Corrected decode_data to match index.html's encode_data
           const decode_data = (input_string_with_prefix) => {
             const parts = input_string_with_prefix.split(",");
             if (parts.length < 2) return null; // Invalid format
-            const index = parseInt(parts[0]);
-            const base64_data = parts.slice(1).join(","); // Handle cases where data itself might have comma (unlikely here)
+            
+            // Get the first part before the comma (which contains fileId_chunkIndex)
+            const first_part = parts[0];
+            
+            // Find the last underscore which separates the file ID from chunk index
+            const last_underscore_index = first_part.lastIndexOf("_");
+            if (last_underscore_index === -1) return null; // No underscore found
+            
+            // Extract file ID and chunk index using the last underscore
+            const file_id = first_part.substring(0, last_underscore_index);
+            const index = parseInt(first_part.substring(last_underscore_index + 1));
+            
+            if (isNaN(index)) return null; // Index must be a number
+            
+            const base64_data = parts.slice(1).join(","); // Handle cases where data itself might have comma
             
             try {
               const binary_string = atob(base64_data);
@@ -86,11 +137,12 @@
                 data_array[i] = binary_string.charCodeAt(i);
               }
               return {
+                file_id: file_id,
                 index: index,
                 data: data_array, // This is a chunk of the gzipped file
               };
             } catch (e) {
-              console.error("Error decoding base64 data:", e, "for index:", index, "data:", base64_data.substring(0,20));
+              console.error("Error decoding base64 data:", e, "for file_id:", file_id, "index:", index, "data:", base64_data.substring(0,20));
               return null;
             }
           };
@@ -106,11 +158,94 @@
             document.body.removeChild(dummy_element);
             URL.revokeObjectURL(url);
           };
-
+          
+          // Helper function to prepare a file for download
+          const prepare_file_download = (file_id) => {
+            const fileData = files_data.value[file_id];
+            if (!fileData || !fileData.is_complete) {
+              return null;
+            }
+            
+            try {
+              const output_array_list = [];
+              for (let i = 0; i < fileData.metadata.chunks; i++) {
+                if (fileData.chunks[i]) {
+                  output_array_list.push(fileData.chunks[i]);
+                } else {
+                  return null;
+                }
+              }
+              
+              // Concatenate Uint8Arrays
+              const total_length = output_array_list.reduce((acc, val) => acc + val.length, 0);
+              const concatenated_gzipped_data = new Uint8Array(total_length);
+              let offset = 0;
+              for (const arr of output_array_list) {
+                concatenated_gzipped_data.set(arr, offset);
+                offset += arr.length;
+              }
+              
+              const inflated_array = pako.inflate(concatenated_gzipped_data);
+              return {
+                data: inflated_array,
+                name: fileData.metadata.name
+              };
+            } catch (e) {
+              console.error("Error inflating data:", e);
+              return null;
+            }
+          };
+          
+          const download_specific_file = (file_id) => {
+            const prepared = prepare_file_download(file_id);
+            if (!prepared) {
+              user_message.value = "File is not complete or could not be prepared for download.";
+              return;
+            }
+            
+            download_file(prepared.data, prepared.name);
+            user_message.value = `File "${prepared.name}" successfully downloaded.`;
+          };
+          
+          const download_all_files = async () => {
+            if (is_downloading_all.value) return;
+            
+            const complete_file_ids = Object.keys(files_data.value).filter(
+              id => files_data.value[id].is_complete
+            );
+            
+            if (complete_file_ids.length === 0) {
+              user_message.value = "No complete files to download.";
+              return;
+            }
+            
+            is_downloading_all.value = true;
+            user_message.value = `Preparing to download ${complete_file_ids.length} files...`;
+            
+            // Small delay between downloads to avoid browser blocking
+            for (let i = 0; i < complete_file_ids.length; i++) {
+              const file_id = complete_file_ids[i];
+              const prepared = prepare_file_download(file_id);
+              
+              if (prepared) {
+                user_message.value = `Downloading file ${i+1}/${complete_file_ids.length}: ${prepared.name}`;
+                download_file(prepared.data, prepared.name);
+                
+                // Wait a small delay between downloads to avoid browser blocking
+                if (i < complete_file_ids.length - 1) {
+                  await new Promise(resolve => setTimeout(resolve, 500));
+                }
+              }
+            }
+            
+            user_message.value = `Successfully downloaded ${complete_file_ids.length} files.`;
+            is_downloading_all.value = false;
+          };
+          
           const clear_state = () => {
             is_processing.value = false;
-            decoded_chunks.value = {};
-            Object.keys(file_metadata).forEach(key => delete file_metadata[key]);
+            is_downloading_all.value = false;
+            files_data.value = {};
             pasted_image_src.value = null;
             user_message.value = "Paste an image containing QR codes.";
           };
@@ -145,6 +280,22 @@
             user_message.value = "Processing cancelled. Paste a new image or clear.";
           };
 
+          const check_file_completion = (file_id) => {
+            const fileData = files_data.value[file_id];
+            if (!fileData || !fileData.metadata || !fileData.metadata.chunks) return false;
+            
+            const received_chunk_count = Object.keys(fileData.chunks).length;
+            const is_complete = received_chunk_count === fileData.metadata.chunks;
+            
+            // Update the completion status
+            if (is_complete && !fileData.is_complete) {
+              fileData.is_complete = true;
+              user_message.value = `File "${fileData.metadata.name}" is complete and ready for download.`;
+            }
+            
+            return is_complete;
+          };
+
           const process_pasted_image = async () => {
             if (!pasted_image_src.value) {
               user_message.value = "No image pasted. Please paste an image first.";
@@ -154,10 +305,7 @@
 
             is_processing.value = true;
             user_message.value = "Processing pasted image...";
-            // Reset data structures before processing symbols
-            decoded_chunks.value = {}; 
-            Object.keys(file_metadata).forEach(key => delete file_metadata[key]);
-            metadata_found = false; // Ensure metadata_found is also reset here
+            // No need to reset data structures - we want to accumulate data across multiple pastes
 
             const image = new Image();
             image.onload = async () => {
@@ -195,7 +343,8 @@
               }
 
               user_message.value = `Found ${symbols.length} QR codes. Decoding...`;
-              // let metadata_found = false; // This was moved up
+              let metadata_count = 0;
+              let chunk_count = 0;
 
               for (const symbol of symbols) {
                 if (!is_processing.value) break;
@@ -205,10 +354,24 @@
                 try {
                   // Try to parse as metadata first
                   const potential_metadata = JSON.parse(decoded_symbol_data);
-                  if (potential_metadata && typeof potential_metadata.chunks === 'number' && potential_metadata.name) {
-                    Object.assign(file_metadata, potential_metadata);
-                    metadata_found = true;
-                    user_message.value = `Found metadata for: ${file_metadata.name}. Total chunks: ${file_metadata.chunks}`;
+                  if (potential_metadata && typeof potential_metadata.chunks === 'number' && 
+                      potential_metadata.name && potential_metadata.id) {
+                    // Initialize file data structure if it doesn't exist
+                    if (!files_data.value[potential_metadata.id]) {
+                      files_data.value[potential_metadata.id] = {
+                        metadata: {},
+                        chunks: {},
+                        is_complete: false
+                      };
+                    }
+                    
+                    // Update metadata
+                    Object.assign(files_data.value[potential_metadata.id].metadata, potential_metadata);
+                    metadata_count++;
+                    
+                    // Check if this completes the file
+                    check_file_completion(potential_metadata.id);
+                    
                     continue; // Move to next symbol
                   }
                 } catch (e) {
@@ -216,68 +379,49 @@
                 }
 
                 const chunk_data_obj = decode_data(decoded_symbol_data);
-                if (chunk_data_obj) {
-                    console.log(`Result from decode_data for supposed chunk (index ${chunk_data_obj.index}):`, chunk_data_obj);
-                    if (typeof chunk_data_obj.index === 'number' && !isNaN(chunk_data_obj.index)) {
-                        if (chunk_data_obj.data instanceof Uint8Array) {
-                            decoded_chunks.value[chunk_data_obj.index] = chunk_data_obj.data;
-                            console.log(`Successfully added chunk ${chunk_data_obj.index} to decoded_chunks.`);
-                        } else {
-                            console.warn(`Chunk data for index ${chunk_data_obj.index} is not a Uint8Array. Type: ${typeof chunk_data_obj.data}, Value:`, chunk_data_obj.data);
-                        }
-                    } else {
-                        console.warn(`Chunk index is not a valid number. Index: ${chunk_data_obj.index}. Object:`, chunk_data_obj);
-                    }
+                if (chunk_data_obj && chunk_data_obj.file_id) {
+                  console.log(`Result from decode_data for supposed chunk (file_id ${chunk_data_obj.file_id}, index ${chunk_data_obj.index}):`, chunk_data_obj);
+                  
+                  // Initialize file data structure if it doesn't exist
+                  if (!files_data.value[chunk_data_obj.file_id]) {
+                    files_data.value[chunk_data_obj.file_id] = {
+                      metadata: {},
+                      chunks: {},
+                      is_complete: false
+                    };
+                  }
+                  
+                  // Store the chunk data
+                  if (chunk_data_obj.data instanceof Uint8Array) {
+                    files_data.value[chunk_data_obj.file_id].chunks[chunk_data_obj.index] = chunk_data_obj.data;
+                    chunk_count++;
+                    
+                    // Check if this completes the file
+                    check_file_completion(chunk_data_obj.file_id);
+                  } else {
+                    console.warn(`Chunk data for file ${chunk_data_obj.file_id}, index ${chunk_data_obj.index} is not a Uint8Array.`);
+                  }
                 } else {
-                  console.warn("decode_data returned null for symbol (likely atob failure or wrong format):", decoded_symbol_data.substring(0,50) + "...");
+                  console.warn("decode_data returned null or invalid file_id for symbol:", decoded_symbol_data.substring(0,50) + "...");
                 }
               }
               
               if (!is_processing.value) return; // Check if cancelled during symbol processing
 
-              if (!metadata_found) {
-                user_message.value = `Found ${symbols.length} QR codes, but the metadata QR code was not identified or decoded correctly. Please ensure it's clear in the image.`;
-                is_processing.value = false;
-                return;
-              }
-
-              const received_chunk_count = Object.keys(decoded_chunks.value).length;
-              console.log("Decoded chunk indices:", Object.keys(decoded_chunks.value).map(k => parseInt(k)).sort((a,b) => a-b)); // Log decoded chunk indices
-              if (file_metadata.chunks && received_chunk_count === file_metadata.chunks) {
-                user_message.value = "All chunks received. Reconstructing file...";
-                let output_array_list = [];
-                for (let i = 0; i < file_metadata.chunks; i++) {
-                  if (decoded_chunks.value[i]) {
-                    output_array_list.push(decoded_chunks.value[i]);
-                  } else {
-                    user_message.value = `Error: Missing chunk ${i}. Cannot reconstruct.`;
-                    is_processing.value = false;
-                    return;
-                  }
-                }
-                
-                // Concatenate Uint8Arrays
-                const total_length = output_array_list.reduce((acc, val) => acc + val.length, 0);
-                const concatenated_gzipped_data = new Uint8Array(total_length);
-                let offset = 0;
-                for (const arr of output_array_list) {
-                    concatenated_gzipped_data.set(arr, offset);
-                    offset += arr.length;
-                }
-
-                try {
-                  const inflated_array = pako.inflate(concatenated_gzipped_data);
-                  download_file(inflated_array, file_metadata.name);
-                  user_message.value = `File "${file_metadata.name}" successfully reconstructed and downloaded.`;
-                } catch (e) {
-                  console.error("Error inflating data:", e);
-                  user_message.value = "Error decompressing file data. Check console.";
-                }
+              // Summary of processed data
+              const complete_files = Object.values(files_data.value).filter(fd => fd.is_complete).length;
+              const incomplete_files = Object.keys(files_data.value).length - complete_files;
+              
+              if (metadata_count > 0 || chunk_count > 0) {
+                user_message.value = `Processed ${metadata_count} metadata and ${chunk_count} chunks. ` +
+                                   `${complete_files} files complete, ${incomplete_files} files incomplete.`;
               } else {
-                user_message.value = `Incomplete data: Received ${received_chunk_count} of ${file_metadata.chunks || 'N/A'} chunks.`;
+                user_message.value = `Found ${symbols.length} QR codes, but could not decode any valid file data.`;
               }
+              
               is_processing.value = false;
             };
+            
             image.onerror = () => {
               user_message.value = "Could not load the pasted image.";
               is_processing.value = false;
@@ -328,11 +472,13 @@
             process_pasted_image,
             is_processing,
             stop_processing,
-            file_metadata,
-            decoded_chunks,
+            files_data,
             pasted_image_src,
             clear_state,
-            request_paste
+            request_paste,
+            download_specific_file,
+            download_all_files,
+            complete_files_count
           };
         },
       }).mount("#app");
