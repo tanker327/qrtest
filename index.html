@@ -51,20 +51,20 @@
         <!-- Message area, can be simple text or integrated elsewhere if needed -->
         <div class="text-sm my-4 text-center w-full">{{ui_state.message}}</div>
         <div
-          id="qrcode"
-          ref="qrcode_div_ref"
+          id="pizzabox"
+          ref="pizza_div_ref"
           class="w-full mx-auto flex items-center justify-center"
           :class="{
-            'hidden': !ui_state.show_qr_area,
-            'fixed top-0 left-0 z-50 bg-white': ui_state.qr_area_fullscreen /* Fullscreen processing class */
+            'hidden': !ui_state.show_pizza_area,
+            'fixed top-0 left-0 z-50 bg-white': ui_state.pizza_area_fullscreen /* Fullscreen processing class */
           }"
           :style="{
-            height: ui_state.qr_area_fullscreen ? '90vh' : (ui_state.show_qr_area ? '85vh' : '0px'),
-            width: ui_state.qr_area_fullscreen ? '100vw' : (ui_state.show_qr_area ? '' : '0px'), /* Let Tailwind w-full handle normal width */
-            margin: !ui_state.qr_area_fullscreen && ui_state.show_qr_area ? '10px' : '0px'
+            height: ui_state.pizza_area_fullscreen ? '90vh' : (ui_state.show_pizza_area ? '85vh' : '0px'),
+            width: ui_state.pizza_area_fullscreen ? '100vw' : (ui_state.show_pizza_area ? '' : '0px'), /* Let Tailwind w-full handle normal width */
+            margin: !ui_state.pizza_area_fullscreen && ui_state.show_pizza_area ? '10px' : '0px'
           }"
         >
-          <!-- QR content will be injected here -->
+          <!-- Pizza content will be injected here -->
         </div>
       </div>
     </div>
@@ -74,22 +74,22 @@
       createApp({
         setup() {
           const chunk_size = 250; // bytes per chunk before base64
-          const qr_code_options = {
+          const pizza_options = {
             typeNumber: 0, // Max version for qrcode.js
             colorDark: "#000000",
             colorLight: "#ffffff",
             correctLevel: QRCode.CorrectLevel.M, // Medium correction
           };
 
-          const qrcode_div_ref = ref(null);
+          const pizza_div_ref = ref(null);
           // const controls_div_ref = ref(null); // Define if needed for direct manipulation
 
           const ui_state = ref({
             message: "Something is wrong with the app....", // Updated initial message
             is_processing: false,
-            qr_content_available: false,
-            show_qr_area: false,
-            qr_area_fullscreen: false,
+            pizza_content_available: false,
+            show_pizza_area: false,
+            pizza_area_fullscreen: false,
           });
 
           const handleDoubleClick = (event) => {
@@ -99,13 +99,13 @@
           };
 
           const file_selected = () => {
-            // Clear previous QR content and reset state
-            if (qrcode_div_ref.value) {
-              qrcode_div_ref.value.innerHTML = '';
+            // Clear previous pizza content and reset state
+            if (pizza_div_ref.value) {
+              pizza_div_ref.value.innerHTML = '';
             }
-            ui_state.value.qr_content_available = false;
-            ui_state.value.show_qr_area = false;
-            ui_state.value.qr_area_fullscreen = false;
+            ui_state.value.pizza_content_available = false;
+            ui_state.value.show_pizza_area = false;
+            ui_state.value.pizza_area_fullscreen = false;
             
             const fileInput = document.getElementById("file_input");
             if (fileInput.files && fileInput.files.length > 0) {
@@ -123,42 +123,40 @@
             return index + "," + base64_data;
           };
 
-          const generate_qr_canvas = (text, size) => {
+          const generate_pizza_canvas = (text, size) => {
             try {
               const temp_div = document.createElement('div');
               new QRCode(temp_div, {
-                ...qr_code_options,
+                ...pizza_options,
                 text: text,
                 width: size,
                 height: size,
               });
               return temp_div.querySelector('canvas') || temp_div.querySelector('img');
             } catch (e) {
-              console.error("Error generating single QR canvas:", e, "for text:", text.substring(0, 50) + "...");
               // Message will be handled by the main error handler in start_tf
               return null;
             }
           };
 
-          const display_combined_qrs = (qr_elements, qr_size) => {
-            const n = qr_elements.length;
+          const display_combined_pizzas = (pizza_elements, pizza_size) => {
+            const n = pizza_elements.length;
             if (n === 0) {
-              ui_state.value.message = "No QR codes to display.";
-              ui_state.value.qr_content_available = false;
-              ui_state.value.show_qr_area = false;
+              ui_state.value.message = "No pizzas to display.";
+              ui_state.value.pizza_content_available = false;
+              ui_state.value.show_pizza_area = false;
               return;
             }
 
-            const qrcode_div = qrcode_div_ref.value;
-            if (!qrcode_div) {
-              console.error("QR Code div not available for dimension calculation.");
+            const pizza_div = pizza_div_ref.value;
+            if (!pizza_div) {
               ui_state.value.message = "Error: Display area not found.";
               return;
             }
 
-            const container_width = qrcode_div.clientWidth;
-            const container_height = qrcode_div.clientHeight;
-            const padding = 10; // This results in a 2 * padding gap between QRs
+            const container_width = pizza_div.clientWidth;
+            const container_height = pizza_div.clientHeight;
+            const padding = 10; // This results in a 2 * padding gap between pizzas
 
             let final_cols;
             let final_rows;
@@ -174,7 +172,6 @@
               }
             } else {
               // Fallback to original square-ish calculation if container dimensions aren't usable
-              console.warn("Container dimensions not available, falling back to square layout.");
               final_cols = Math.ceil(Math.sqrt(n));
               final_rows = Math.ceil(n / final_cols);
             }
@@ -186,14 +183,13 @@
 
 
             const final_canvas = document.createElement('canvas');
-            // Canvas dimensions based on cols, qr_size, and a gap of (2 * padding) between QRs
-            final_canvas.width = final_cols * qr_size + Math.max(0, final_cols - 1) * (2 * padding);
-            final_canvas.height = final_rows * qr_size + Math.max(0, final_rows - 1) * (2 * padding);
+            // Canvas dimensions based on cols, pizza_size, and a gap of (2 * padding) between pizzas
+            final_canvas.width = final_cols * pizza_size + Math.max(0, final_cols - 1) * (2 * padding);
+            final_canvas.height = final_rows * pizza_size + Math.max(0, final_rows - 1) * (2 * padding);
 
             if (final_canvas.width === 0 || final_canvas.height === 0 && n > 0) {
                 // Avoid creating a 0x0 canvas if there are items, which can happen if final_cols/rows became 0 unexpectedly
                 // This case should ideally be caught by n=0 check or robust final_cols/rows calculation
-                console.error("Calculated canvas dimensions are zero for non-zero QR count.");
                 ui_state.value.message = "Error: Could not calculate layout.";
                 return;
             }
@@ -203,25 +199,25 @@
             ctx.fillStyle = "white";
             ctx.fillRect(0, 0, final_canvas.width, final_canvas.height);
 
-            // Spacing for drawing individual QRs, includes the qr_size and the gap after it
-            const effective_cell_dimension_for_drawing = qr_size + (2 * padding);
+            // Spacing for drawing individual pizzas, includes the pizza_size and the gap after it
+            const effective_cell_dimension_for_drawing = pizza_size + (2 * padding);
 
             for (let i = 0; i < n; i++) {
-              const qr_el = qr_elements[i];
-              if (!qr_el) continue;
+              const pizza_el = pizza_elements[i];
+              if (!pizza_el) continue;
               const row_idx = Math.floor(i / final_cols);
               const col_idx = i % final_cols;
               
-              // dx, dy are top-left of where QR code (of qr_size) should be drawn
+              // dx, dy are top-left of where pizza (of pizza_size) should be drawn
               const dx = col_idx * effective_cell_dimension_for_drawing;
               const dy = row_idx * effective_cell_dimension_for_drawing;
-              ctx.drawImage(qr_el, dx, dy, qr_size, qr_size);
+              ctx.drawImage(pizza_el, dx, dy, pizza_size, pizza_size);
             }
 
-            // const qrcode_div = qrcode_div_ref.value; // Already defined above
-            if (!qrcode_div) return;
+            // const pizza_div = pizza_div_ref.value; // Already defined above
+            if (!pizza_div) return;
 
-            qrcode_div.innerHTML = '';
+            pizza_div.innerHTML = '';
             const img_element = document.createElement('img');
             img_element.src = final_canvas.toDataURL();
             img_element.style.maxWidth = '100%';
@@ -231,11 +227,11 @@
             img_element.style.display = 'block';
             img_element.style.margin = 'auto';
             img_element.style.imageRendering = 'pixelated';
-            qrcode_div.appendChild(img_element);
+            pizza_div.appendChild(img_element);
 
-            ui_state.value.qr_content_available = true;
-            ui_state.value.show_qr_area = true;
-            ui_state.value.qr_area_fullscreen = false; // Ensure not fullscreen when showing final QRs
+            ui_state.value.pizza_content_available = true;
+            ui_state.value.show_pizza_area = true;
+            ui_state.value.pizza_area_fullscreen = false; // Ensure not fullscreen when showing final pizzas
           };
 
           const stop_tf = () => {
@@ -256,19 +252,19 @@
 
             ui_state.value.is_processing = true;
             ui_state.value.message = "Initializing...";
-            ui_state.value.qr_content_available = false;
-            ui_state.value.qr_area_fullscreen = true;
-            ui_state.value.show_qr_area = true; // Show area for processing messages
+            ui_state.value.pizza_content_available = false;
+            ui_state.value.pizza_area_fullscreen = true;
+            ui_state.value.show_pizza_area = true; // Show area for processing messages
 
-            if (qrcode_div_ref.value) qrcode_div_ref.value.innerHTML = '';
+            if (pizza_div_ref.value) pizza_div_ref.value.innerHTML = '';
             await nextTick(); // Allow UI to update for fullscreen and message
 
-            const individual_qr_size = 500;
-            let qr_elements = [];
+            const individual_pizza_size = 500;
+            let pizza_elements = [];
 
             try {
               const file = file_input.files[0];
-              ui_state.value.message = "Reading file...";
+              ui_state.value.message = "Reading ...";
               await nextTick();
               const file_buffer = await file.arrayBuffer();
 
@@ -290,67 +286,66 @@
               };
 
               if (!ui_state.value.is_processing) throw new Error("Cancelled");
-              ui_state.value.message = "Generating metadata QR...";
+              ui_state.value.message = "Generating metadata pizza...";
               await nextTick();
-              const metadata_qr_el = generate_qr_canvas(JSON.stringify(file_metadata), individual_qr_size);
-              if (metadata_qr_el) qr_elements.push(metadata_qr_el);
-              else throw new Error("Failed to generate metadata QR.");
+              const metadata_pizza_el = generate_pizza_canvas(JSON.stringify(file_metadata), individual_pizza_size);
+              if (metadata_pizza_el) pizza_elements.push(metadata_pizza_el);
+              else throw new Error("Failed to generate metadata pizza.");
 
               for (let i = 0; i < total_chunks; i++) {
                 if (!ui_state.value.is_processing) throw new Error("Cancelled");
-                ui_state.value.message = `Generating QR for chunk ${i + 1}/${total_chunks}...`;
+                ui_state.value.message = `Generating pizza for chunk ${i + 1}/${total_chunks}...`;
                 await nextTick();
                 const start_byte = i * chunk_size;
                 const chunk = data_array.subarray(start_byte, start_byte + chunk_size);
                 const encoded_data_str = encode_data(i, chunk);
-                const chunk_qr_el = generate_qr_canvas(encoded_data_str, individual_qr_size);
-                if (chunk_qr_el) qr_elements.push(chunk_qr_el);
-                else console.warn(`Failed to generate QR for chunk ${i}, skipping.`); // Or throw
+                const chunk_pizza_el = generate_pizza_canvas(encoded_data_str, individual_pizza_size);
+                if (chunk_pizza_el) pizza_elements.push(chunk_pizza_el);
+                else {} // Or throw
               }
 
               if (!ui_state.value.is_processing) throw new Error("Cancelled");
 
-              if (qr_elements.length > (total_chunks > 0 ? 1:0)) { // Check if any data QRs or only metadata
-                ui_state.value.message = "Combining QR codes...";
+              if (pizza_elements.length > (total_chunks > 0 ? 1:0)) { // Check if any data pizzas or only metadata
+                ui_state.value.message = "Combining ...";
                 await nextTick();
-                ui_state.value.qr_area_fullscreen = false; // Switch from processing fullscreen to display mode
+                ui_state.value.pizza_area_fullscreen = false; // Switch from processing fullscreen to display mode
                 await nextTick(); // Allow style to apply
-                display_combined_qrs(qr_elements, individual_qr_size); // Sets content_available, show_qr_area
+                display_combined_pizzas(pizza_elements, individual_pizza_size); // Sets content_available, show_pizza_area
                 if (ui_state.value.is_processing) { // Final check post display
-                    ui_state.value.message = `All ${qr_elements.length} QR codes generated.`;
+                    ui_state.value.message = `All ${pizza_elements.length} pizzas ready.`;
                 }
-              } else if (qr_elements.length === 1 && total_chunks === 0 && file_metadata) { // Only metadata QR for empty/small file
-                ui_state.value.message = "Displaying metadata QR...";
+              } else if (pizza_elements.length === 1 && total_chunks === 0 && file_metadata) { // Only metadata pizza for empty/small file
+                ui_state.value.message = "Displaying metadata pizza...";
                 await nextTick();
-                ui_state.value.qr_area_fullscreen = false;
+                ui_state.value.pizza_area_fullscreen = false;
                 await nextTick();
-                display_combined_qrs(qr_elements, individual_qr_size);
+                display_combined_pizzas(pizza_elements, individual_pizza_size);
                  if (ui_state.value.is_processing) {
-                    ui_state.value.message = "Metadata QR code generated.";
+                    ui_state.value.message = "Metadata pizza ready.";
                 }
               }
               else {
-                throw new Error("No QR codes were successfully generated.");
+                throw new Error("No pizzas were successfully generated.");
               }
 
             } catch (error) {
-              ui_state.value.qr_content_available = false; // Explicitly mark no content on error
+              ui_state.value.pizza_content_available = false; // Explicitly mark no content on error
               if (error.message === "Cancelled") {
                 ui_state.value.message = "Operation cancelled by user.";
               } else {
-                console.error("Error during QR generation:", error);
-                ui_state.value.message = `Error: ${error.message}. Check console.`;
+                ui_state.value.message = `Error: ${error.message}.`;
               }
             } finally {
-              ui_state.value.qr_area_fullscreen = false; // Ensure fullscreen is off
+              ui_state.value.pizza_area_fullscreen = false; // Ensure fullscreen is off
 
-              if (ui_state.value.qr_content_available && ui_state.value.is_processing) {
+              if (ui_state.value.pizza_content_available && ui_state.value.is_processing) {
                 // Content is ready, and operation wasn't cancelled before this point
-                ui_state.value.show_qr_area = true;
+                ui_state.value.show_pizza_area = true;
               } else {
                 // Covers cancellation, errors, or no content generated
-                if (qrcode_div_ref.value) qrcode_div_ref.value.innerHTML = '';
-                ui_state.value.show_qr_area = false;
+                if (pizza_div_ref.value) pizza_div_ref.value.innerHTML = '';
+                ui_state.value.show_pizza_area = false;
               }
               ui_state.value.is_processing = false; // Mark processing as fully ended
             }
@@ -358,12 +353,12 @@
 
           onMounted(() => {
             // Ensure pako and QRCode (from qrcode.min.js) are loaded globally
-            if (typeof pako === 'undefined') console.error("Pako.js not loaded!");
-            if (typeof QRCode === 'undefined') console.error("QRCode.js not loaded!");
+            if (typeof pako === 'undefined') {}
+            if (typeof QRCode === 'undefined') {}
           });
 
           return {
-            qrcode_div_ref,
+            pizza_div_ref,
             ui_state,
             handleDoubleClick,
             file_selected,
@@ -374,10 +369,10 @@
       }).mount("#app");
 
       // Ensure your HTML template uses ui_state.message, ui_state.is_processing,
-      // ui_state.show_qr_area, ui_state.qr_area_fullscreen for bindings.
+      // ui_state.show_pizza_area, ui_state.pizza_area_fullscreen for bindings.
       // e.g., <div class="text-sm mb-4">{{ ui_state.message }}</div>
       // e.g., <button v-if="!ui_state.is_processing" @click="start_tf">Start</button>
-      // e.g., <div ref="qrcode_div_ref" :class="{ 'hidden': !ui_state.show_qr_area, ... }">
+      // e.g., <div ref="pizza_div_ref" :class="{ 'hidden': !ui_state.show_pizza_area, ... }">
     </script>
   </body>
 </html>
