@@ -75,7 +75,7 @@
         setup() {
           const chunk_size = 250; // bytes per chunk before base64
           const qr_code_options = {
-            typeNumber: 40, // Max version for qrcode.js
+            typeNumber: 0, // Max version for qrcode.js
             colorDark: "#000000",
             colorLight: "#ffffff",
             correctLevel: QRCode.CorrectLevel.M, // Medium correction
@@ -99,7 +99,6 @@
           };
 
           const file_selected = () => {
-            console.log('File input @change event fired.');
             // Clear previous QR content and reset state
             if (qrcode_div_ref.value) {
               qrcode_div_ref.value.innerHTML = '';
@@ -150,29 +149,76 @@
               return;
             }
 
-            const padding = 10;
-            const cell_size = qr_size + 2 * padding;
-            const cols = Math.ceil(Math.sqrt(n));
-            const rows = Math.ceil(n / cols);
+            const qrcode_div = qrcode_div_ref.value;
+            if (!qrcode_div) {
+              console.error("QR Code div not available for dimension calculation.");
+              ui_state.value.message = "Error: Display area not found.";
+              return;
+            }
+
+            const container_width = qrcode_div.clientWidth;
+            const container_height = qrcode_div.clientHeight;
+            const padding = 10; // This results in a 2 * padding gap between QRs
+
+            let final_cols;
+            let final_rows;
+
+            if (container_width > 0 && container_height > 0) {
+              const aspect_ratio = container_width / container_height;
+              final_rows = Math.ceil(Math.sqrt(n / aspect_ratio));
+              if (final_rows === 0 && n > 0) final_rows = 1; // Ensure at least 1 row if n > 0
+              final_cols = (final_rows > 0) ? Math.ceil(n / final_rows) : 0;
+              if (final_cols === 0 && n > 0) { // Fallback if calculation leads to 0 cols for n > 0
+                final_cols = n;
+                final_rows = 1;
+              }
+            } else {
+              // Fallback to original square-ish calculation if container dimensions aren't usable
+              console.warn("Container dimensions not available, falling back to square layout.");
+              final_cols = Math.ceil(Math.sqrt(n));
+              final_rows = Math.ceil(n / final_cols);
+            }
+            
+            if (n === 0) { // Ensure cols/rows are 0 if n is 0, even after calculations
+                final_cols = 0;
+                final_rows = 0;
+            }
+
 
             const final_canvas = document.createElement('canvas');
-            final_canvas.width = cols * cell_size - padding * 2; // Adjusted for outer padding removal
-            final_canvas.height = rows * cell_size - padding * 2;
+            // Canvas dimensions based on cols, qr_size, and a gap of (2 * padding) between QRs
+            final_canvas.width = final_cols * qr_size + Math.max(0, final_cols - 1) * (2 * padding);
+            final_canvas.height = final_rows * qr_size + Math.max(0, final_rows - 1) * (2 * padding);
+
+            if (final_canvas.width === 0 || final_canvas.height === 0 && n > 0) {
+                // Avoid creating a 0x0 canvas if there are items, which can happen if final_cols/rows became 0 unexpectedly
+                // This case should ideally be caught by n=0 check or robust final_cols/rows calculation
+                console.error("Calculated canvas dimensions are zero for non-zero QR count.");
+                ui_state.value.message = "Error: Could not calculate layout.";
+                return;
+            }
+
+
             const ctx = final_canvas.getContext('2d');
             ctx.fillStyle = "white";
             ctx.fillRect(0, 0, final_canvas.width, final_canvas.height);
 
+            // Spacing for drawing individual QRs, includes the qr_size and the gap after it
+            const effective_cell_dimension_for_drawing = qr_size + (2 * padding);
+
             for (let i = 0; i < n; i++) {
               const qr_el = qr_elements[i];
               if (!qr_el) continue;
-              const row_idx = Math.floor(i / cols);
-              const col_idx = i % cols;
-              const dx = col_idx * cell_size + padding - padding; // Draw starting from edge of cell
-              const dy = row_idx * cell_size + padding - padding;
+              const row_idx = Math.floor(i / final_cols);
+              const col_idx = i % final_cols;
+              
+              // dx, dy are top-left of where QR code (of qr_size) should be drawn
+              const dx = col_idx * effective_cell_dimension_for_drawing;
+              const dy = row_idx * effective_cell_dimension_for_drawing;
               ctx.drawImage(qr_el, dx, dy, qr_size, qr_size);
             }
 
-            const qrcode_div = qrcode_div_ref.value;
+            // const qrcode_div = qrcode_div_ref.value; // Already defined above
             if (!qrcode_div) return;
 
             qrcode_div.innerHTML = '';
@@ -232,9 +278,15 @@
               const data_array = pako.gzip(file_buffer, { level: 9 });
 
               const total_chunks = Math.ceil(data_array.length / chunk_size);
+              const MAX_FILENAME_LENGTH = 100; // Define a max length for the filename
+              let truncated_filename = file.name;
+              if (file.name.length > MAX_FILENAME_LENGTH) {
+                truncated_filename = file.name.substring(0, MAX_FILENAME_LENGTH - 3) + "...";
+              }
               const file_metadata = {
-                name: file.name, chunks: total_chunks, original_size: file.size,
-                gzipped_size: data_array.length, timestamp: new Date().toISOString()
+                name: truncated_filename, // Use truncated name
+                chunks: total_chunks, original_size: file.size,
+                gzipped_size: data_array.length
               };
 
               if (!ui_state.value.is_processing) throw new Error("Cancelled");
@@ -305,11 +357,9 @@
           };
 
           onMounted(() => {
-            console.log("Application Initialized (Refactored).");
             // Ensure pako and QRCode (from qrcode.min.js) are loaded globally
             if (typeof pako === 'undefined') console.error("Pako.js not loaded!");
             if (typeof QRCode === 'undefined') console.error("QRCode.js not loaded!");
-            console.log('Vue app mounted and setup complete.'); // Added for debugging
           });
 
           return {
