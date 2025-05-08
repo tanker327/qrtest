@@ -78,7 +78,8 @@
             typeNumber: 0, // Max version for qrcode.js
             colorDark: "#000000",
             colorLight: "#ffffff",
-            correctLevel: QRCode.CorrectLevel.M, // Medium correction
+            correctLevel: QRCode.CorrectLevel.H, // Changed from M to H for better error correction
+            margin: 4, // Add explicit margin around QR codes
           };
 
           const pizza_div_ref = ref(null);
@@ -132,6 +133,8 @@
                 width: size,
                 height: size,
               });
+              
+              // Return the original canvas or img without modification
               return temp_div.querySelector('canvas') || temp_div.querySelector('img');
             } catch (e) {
               // Message will be handled by the main error handler in start_tf
@@ -156,7 +159,7 @@
 
             const container_width = pizza_div.clientWidth;
             const container_height = pizza_div.clientHeight;
-            const padding = 10; // This results in a 2 * padding gap between pizzas
+            const padding = 20; // Increased from 10 to 20 for better separation between QR codes
 
             let final_cols;
             let final_rows;
@@ -226,7 +229,7 @@
             img_element.style.height = 'auto';
             img_element.style.display = 'block';
             img_element.style.margin = 'auto';
-            img_element.style.imageRendering = 'pixelated';
+            img_element.style.imageRendering = 'pixelated'; // Reverted back to 'pixelated' to ensure compatibility
             pizza_div.appendChild(img_element);
 
             ui_state.value.pizza_content_available = true;

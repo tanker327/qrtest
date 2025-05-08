@@ -31,6 +31,12 @@
         </div>
         <div class="flex space-x-4">
           <button
+            @click="request_paste"
+            class="mb-6 p-2 border-2 border-gray-500 rounded hover:bg-gray-100"
+          >
+            Paste Image
+          </button>
+          <button
             v-if="!is_processing"
             @click="process_pasted_image"
             :disabled="!pasted_image_src"
@@ -107,6 +113,31 @@
             Object.keys(file_metadata).forEach(key => delete file_metadata[key]);
             pasted_image_src.value = null;
             user_message.value = "Paste an image containing QR codes.";
+          };
+
+          const request_paste = async () => {
+            try {
+              // Try using the clipboard API
+              const clipboardItems = await navigator.clipboard.read();
+              for (const clipboardItem of clipboardItems) {
+                for (const type of clipboardItem.types) {
+                  if (type.startsWith('image/')) {
+                    const blob = await clipboardItem.getType(type);
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                      pasted_image_src.value = e.target.result;
+                      user_message.value = "Image pasted. Click 'Process Image' or paste another.";
+                    };
+                    reader.readAsDataURL(blob);
+                    return;
+                  }
+                }
+              }
+              user_message.value = "No image found in clipboard.";
+            } catch (err) {
+              console.error("Clipboard API error:", err);
+              user_message.value = "Please use Ctrl+V/Cmd+V to paste. Direct clipboard access failed.";
+            }
           };
 
           const stop_processing = () => {
@@ -300,7 +331,8 @@
             file_metadata,
             decoded_chunks,
             pasted_image_src,
-            clear_state
+            clear_state,
+            request_paste
           };
         },
       }).mount("#app");
